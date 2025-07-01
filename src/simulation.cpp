@@ -109,7 +109,7 @@ void Simulation::setupScene() {
   std::uniform_real_distribution<> dis(0.0, 2.0 * M_PI);
 
   // inner objects -> faster and closer orbits
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 30; i++) {
     float distance = 8.0f + i * 4.0f;
     float angle = dis(gen);
     float orbitalSpeed = sqrt(G * 1000.0f / distance) * 0.8f;
@@ -122,7 +122,7 @@ void Simulation::setupScene() {
   }
 
   // outer objects -> slower and longer orbits
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 30; i++) {
     float distance = 25.0f + i * 8.0f;
     float angle = dis(gen);
     float orbitalSpeed = sqrt(G * 1000.0f / distance) * 0.7f;
@@ -135,7 +135,7 @@ void Simulation::setupScene() {
   }
 
   // objects between inner and outer objects (small debris)
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 50; i++) {
     float distance = 15.0f + (i % 3) * 5.0f;
     float angle = dis(gen);
     float orbitalSpeed = sqrt(G * 1000.0f / distance) *

@@ -8,6 +8,11 @@ a real-time gravity simulator built with OpenGL
 - controls: pause, speed up/down time, zoom in/out, and reset
 - body types: central star, with inner planets, outer planets and small debris
 
+
+## Demo
+![Gravity Simulator](./media/sample.gif)
+
+
 ## Controls
 
 | Key | Action |
