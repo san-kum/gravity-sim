@@ -47,4 +47,6 @@ ninja
 
 changes can be made in `setupScene()` in `simulation.cpp` to adjust number of bodies, sizes, position, and velocity
 
-
+## Optimizations
+- uses n-body implementation, computationally expensive($O(n^2)$), calculates the forces on each body and updates position and velocity simultaneously.
+- can be optimized with barnes-hut algorithm.

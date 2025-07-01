@@ -134,7 +134,7 @@ void Simulation::setupScene() {
                         glm::vec3(1.0f - i * 0.2f, 0.3f + i * 0.2f, 0.5f));
   }
 
-  // objects between inner and outer objects
+  // objects between inner and outer objects (small debris)
   for (int i = 0; i < 10; i++) {
     float distance = 15.0f + (i % 3) * 5.0f;
     float angle = dis(gen);
