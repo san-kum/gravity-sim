@@ -9,12 +9,14 @@ a real-time gravity simulator built with OpenGL
 - body types: central star, with inner planets, outer planets and small debris
 
 ## Controls
-| Key   | Action             |
-| Space | pause/resume       |
-|↑ / ↓  | speed up/down time |
-|← / →  | zoom in/out        |
-|R      | reset              |
-|Esc    | quit               |
+
+| Key | Action |
+|-----|--------|
+| `Space` | pause/resume |
+| `↑` / `↓` | speed up/down time |
+| `←` / `→` | zoom in/out |
+| `R` | reset simulation |
+| `Esc` | Exit |
 
 ### Build Requirements
 
