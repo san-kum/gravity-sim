@@ -10,7 +10,7 @@ CelestialBody::CelestialBody(glm::vec3 pos, glm::vec3 vel, float m, float r,
 
 void CelestialBody::applyGravity(const CelestialBody &other, float G) {
   if (&other == this)
-    return; 
+    return;
 
   glm::vec3 direction = other.position - position;
   float distance = glm::length(direction);
@@ -45,3 +45,17 @@ void CelestialBody::update(float deltaTime) {
 
   acceleration = glm::vec3(0.0f);
 }
+
+void CelestialBody::addTrajectoryPoint() {
+  trajectory.push_back(position);
+
+  if (trajectory.size() > MAX_TRAJECTORY_POINTS)
+    trajectory.pop_front();
+}
+
+void CelestialBody::clearTrajectory(){
+	trajectory.clear();
+	trajectory.push_back(position);
+}
+
+

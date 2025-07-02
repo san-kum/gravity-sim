@@ -29,13 +29,11 @@ in vec3 FragColor;
 
 void main()
 {
-    // Create circular particle effect
     vec2 circCoord = 2.0 * gl_PointCoord - 1.0;
     if (dot(circCoord, circCoord) > 1.0) {
         discard;
     }
     
-    // Add glow effect based on distance from center
     float dist = length(circCoord);
     float alpha = 1.0 - smoothstep(0.0, 1.0, dist);
     
@@ -43,11 +41,41 @@ void main()
 }
 )";
 
+const char *Simulation::trajectoryVertexShaderSource = R"(
+	#version 330 core
+	layout (location = 0) in vec3 aPos;
+
+	uniform mat4 view;
+	uniform mat4 projection;
+	uniform vec3 color;
+	uniform float alpha;
+
+	out vec4 vertexColor;
+
+	void main()
+	{
+	    gl_Position = projection * view * vec4(aPos, 1.0);
+	    vertexColor = vec4(color, alpha);
+	}
+)";
+
+const char *Simulation::trajectoryFragmentShaderSource = R"(
+	#version 330 core
+	in vec4 vertexColor;
+	out vec4 color;
+
+	void main()
+	{
+	    color = vertexColor;
+	}
+)";
+
 Simulation::Simulation()
     : G(0.1f), cameraDistance(50.0f), cameraAngle(0.0f), paused(false),
-      timeScale(1.0f) {
+      timeScale(1.0f), showTrajectories(true), trajectoryUpdateCounter(0) {
   setupShaders();
   setupGeometry();
+  setupTrajectoryGeometry();
   setupScene();
 }
 
@@ -55,6 +83,9 @@ Simulation::~Simulation() {
   glDeleteVertexArrays(1, &VAO);
   glDeleteBuffers(1, &VBO);
   glDeleteProgram(shaderProgram);
+  glDeleteVertexArrays(1, &trajectoryVAO);
+  glDeleteBuffers(1, &trajectoryVBO);
+  glDeleteProgram(trajectoryShaderProgram);
 }
 
 void Simulation::setupShaders() {
@@ -76,6 +107,26 @@ void Simulation::setupShaders() {
 
   glDeleteShader(vertex);
   glDeleteShader(fragment);
+
+  // Trajectory shaders
+  GLuint trajectoryVertex = glCreateShader(GL_VERTEX_SHADER);
+  glShaderSource(trajectoryVertex, 1, &trajectoryVertexShaderSource, NULL);
+  glCompileShader(trajectoryVertex);
+  checkShaderCompilation(trajectoryVertex, "TRAJECTORY_VERTEX");
+
+  GLuint trajectoryFragment = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(trajectoryVertex, 1, &trajectoryFragmentShaderSource, NULL);
+  glCompileShader(trajectoryFragment);
+  checkShaderCompilation(trajectoryFragment, "TRAJECTORY_FRAGMENT");
+
+  trajectoryShaderProgram = glCreateProgram();
+  glAttachShader(trajectoryShaderProgram, trajectoryVertex);
+  glAttachShader(trajectoryShaderProgram, trajectoryFragment);
+  glLinkProgram(trajectoryShaderProgram);
+  checkProgramLinking(trajectoryShaderProgram);
+
+  glDeleteShader(trajectoryVertex);
+  glDeleteShader(trajectoryFragment);
 }
 
 void Simulation::setupGeometry() {
@@ -98,10 +149,23 @@ void Simulation::setupGeometry() {
   glEnableVertexAttribArray(1);
 }
 
+void Simulation::setupTrajectoryGeometry() {
+  glGenVertexArrays(1, &trajectoryVAO);
+  glGenBuffers(1, &trajectoryVBO);
+
+  glBindVertexArray(trajectoryVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, trajectoryVBO);
+  glBufferData(GL_ARRAY_BUFFER,
+               CelestialBody::MAX_TRAJECTORY_POINTS * 3 * sizeof(float), NULL,
+               GL_DYNAMIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+  glEnableVertexAttribArray(0);
+}
+
 void Simulation::setupScene() {
   // central object fixed (e.g., sun)
   bodies.emplace_back(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f), 1000.0f,
-                      2.0f, glm::vec3(1.0f, 1.0f, 0.0f), true);
+                      5.0f, glm::vec3(1.0f, 1.0f, 0.0f), true);
 
   // random objects to orbit around the central object
   std::random_device rd;
@@ -122,7 +186,7 @@ void Simulation::setupScene() {
   }
 
   // outer objects -> slower and longer orbits
-  for (int i = 0; i < 30; i++) {
+  for (int i = 0; i < 100; i++) {
     float distance = 25.0f + i * 8.0f;
     float angle = dis(gen);
     float orbitalSpeed = sqrt(G * 1000.0f / distance) * 0.7f;
@@ -168,12 +232,26 @@ void Simulation::update(float deltaTime) {
   for (auto &body : bodies) {
     body.update(dt);
   }
+
+  // update trajectories
+
+  trajectoryUpdateCounter++;
+  if (trajectoryUpdateCounter >= 1) {
+    trajectoryUpdateCounter = 0;
+    for (auto &body : bodies) {
+      if (!body.isFixed)
+        body.addTrajectoryPoint();
+    }
+  }
 }
 
 void Simulation::render(int width, int height) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   updateCamera(width, height);
+
+  if (showTrajectories)
+    renderTrajectories();
 
   glUseProgram(shaderProgram);
 
@@ -212,6 +290,47 @@ void Simulation::render(int width, int height) {
   glDisable(GL_BLEND);
 }
 
+void Simulation::renderTrajectories() {
+  glUseProgram(trajectoryShaderProgram);
+  glUniformMatrix4fv(glGetUniformLocation(trajectoryShaderProgram, "view"), 1,
+                     GL_FALSE, glm::value_ptr(view));
+  glUniformMatrix4fv(
+      glGetUniformLocation(trajectoryShaderProgram, "projection"), 1, GL_FALSE,
+      glm::value_ptr(projection));
+
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glLineWidth(2.0f);
+
+  glBindVertexArray(trajectoryVAO);
+
+  for (const auto &body : bodies) {
+    if (body.isFixed || body.trajectory.size() < 2)
+      continue;
+
+    std::vector<float> trajectoryData;
+    for (const auto &point : body.trajectory) {
+      trajectoryData.push_back(point.x);
+      trajectoryData.push_back(point.y);
+      trajectoryData.push_back(point.z);
+    }
+    if (trajectoryData.empty())
+      continue;
+
+    glBindBuffer(GL_ARRAY_BUFFER, trajectoryVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, trajectoryData.size() * sizeof(float),
+                    trajectoryData.data());
+
+    glm::vec3 trajectoryColor = body.color * 0.8f + glm::vec3(0.2f);
+    glUniform3f(glGetUniformLocation(trajectoryShaderProgram, "color"),
+                trajectoryColor.r, trajectoryColor.g, trajectoryColor.b);
+    glUniform1f(glGetUniformLocation(trajectoryShaderProgram, "alpha"), 0.7f);
+
+    glDrawArrays(GL_LINE_STRIP, 0, body.trajectory.size() / 3);
+  }
+  glDisable(GL_BLEND);
+}
+
 void Simulation::updateCamera(int width, int height) {
   cameraAngle += 0.001f;
 
@@ -232,30 +351,47 @@ glm::vec3 Simulation::getCameraPosition() {
 }
 
 void Simulation::handleInput(GLFWwindow *window) {
-  if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
-    paused = !paused;
-    glfwWaitEventsTimeout(0.2);
-  }
 
-  if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+  static bool spacePressed = false;
+  static bool tPressed = false;
+  static bool rPressed = false;
+
+  // Toggle pause
+  if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !spacePressed) {
+    paused = !paused;
+    spacePressed = true;
+  } else if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_RELEASE)
+    spacePressed = false;
+
+  // Toggle trajectories
+  if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !tPressed) {
+    showTrajectories = !showTrajectories;
+		std::cout << "Trajectories " << (showTrajectories ? "ON" : "OFF") << std::endl;
+    tPressed = true;
+  } else if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
+    tPressed = false;
+
+  // WASD
+  if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
     timeScale = glm::min(timeScale * 1.1f, 10.0f);
   }
-  if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+  if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
     timeScale = glm::max(timeScale * 0.9f, 0.1f);
   }
 
-  if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+  if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
     cameraDistance = glm::max(cameraDistance - 1.0f, 10.0f);
   }
-  if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+  if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
     cameraDistance = glm::min(cameraDistance + 1.0f, 200.0f);
   }
 
-  if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+  if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS && !rPressed) {
     bodies.clear();
     setupScene();
-    glfwWaitEventsTimeout(0.2);
-  }
+    rPressed = true;
+  } else if (glfwGetKey(window, GLFW_KEY_R) == GLFW_RELEASE)
+    rPressed = false;
 }
 
 void Simulation::checkShaderCompilation(GLuint shader,
