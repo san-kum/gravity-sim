@@ -1,7 +1,11 @@
 #include "include/simulation.h"
 #include <cmath>
+#include <glm/ext/vector_float3.hpp>
+#include <glm/geometric.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <random>
 
 const char *Simulation::vertexShaderSource = R"(
@@ -71,12 +75,24 @@ const char *Simulation::trajectoryFragmentShaderSource = R"(
 )";
 
 Simulation::Simulation()
-    : G(0.1f), cameraDistance(50.0f), cameraAngle(0.0f), paused(false),
-      timeScale(1.0f), showTrajectories(false), trajectoryUpdateCounter(0) {
+    : G(DEFAULT_GRAVITATIONAL_CONSTANT),
+      cameraDistance(DEFAULT_CAMERA_DISTANCE), cameraAngle(0.0f), paused(false),
+      timeScale(DEFAULT_TIME_SCALE), showTrajectories(false),
+      useBarnesHut(true), trajectoryUpdateCounter(0), spaceMin(-1000.0f),
+      spaceMax(1000.f) {
   setupShaders();
   setupGeometry();
   setupTrajectoryGeometry();
   setupScene();
+
+  calculateBounds();
+  glm::vec3 center = (spaceMin + spaceMax) * 0.5f;
+  float size = glm::length(spaceMax - spaceMin);
+  octreeRoot = std::make_unique<OctreeNode>(center, size);
+
+  std::cout << "Barnes-Hut Algorithm Initialized\n";
+  std::cout << "Press 'B' to toggle between Barnes-Hut and direct N-body "
+               "calculation\n";
 }
 
 Simulation::~Simulation() {
@@ -212,7 +228,39 @@ void Simulation::setupScene() {
 
     bodies.emplace_back(pos, vel, 0.1f, 0.05f, glm::vec3(0.6f, 0.6f, 0.6f));
   }
+  calculateBounds();
 }
+
+void Simulation::calculateBounds() {
+  if (bodies.empty()) {
+    spaceMin = glm::vec3(-1000.0f);
+    spaceMax = glm::vec3(1000.0f);
+    return;
+  }
+
+  spaceMin = glm::vec3(std::numeric_limits<float>::max());
+  spaceMax = glm::vec3(std::numeric_limits<float>::lowest());
+
+  for (const auto &body : bodies) {
+    spaceMin = glm::min(spaceMin, body.position);
+    spaceMax = glm::max(spaceMax, body.position);
+  }
+
+  glm::vec3 padding = (spaceMax - spaceMin) * 0.2f;
+  spaceMax -= padding;
+  spaceMax += padding;
+
+  glm::vec3 size = spaceMax - spaceMin;
+  float minSize = 100.f;
+  if (glm::length(size) < minSize) {
+    glm::vec3 center = (spaceMin + spaceMax) * 0.5f;
+    spaceMin = center - glm::vec3(minSize * 0.5f);
+    spaceMax = center + glm::vec3(minSize * 0.5f);
+  }
+}
+
+
+
 
 void Simulation::update(float deltaTime) {
   if (paused)
