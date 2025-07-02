@@ -38,7 +38,7 @@ int main() {
   std::cout << "SPACE - Pause/Resume\n";
   std::cout << "W/S - Speed up/slow down time\n";
   std::cout << "A/D - zoom in/out\n";
-	std::cout << "T - Toggle trajectory\n";
+  std::cout << "T - Toggle trajectory\n";
   std::cout << "R - reset simulation\n";
   std::cout << "Esc - Exit\n";
 

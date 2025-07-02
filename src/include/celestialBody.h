@@ -22,6 +22,6 @@ public:
 
   void applyGravity(const CelestialBody &other, float G);
   void update(float deltaTime);
-	void addTrajectoryPoint();
-	void clearTrajectory();
+  void addTrajectoryPoint();
+  void clearTrajectory();
 };

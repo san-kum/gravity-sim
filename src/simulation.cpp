@@ -72,7 +72,7 @@ const char *Simulation::trajectoryFragmentShaderSource = R"(
 
 Simulation::Simulation()
     : G(0.1f), cameraDistance(50.0f), cameraAngle(0.0f), paused(false),
-      timeScale(1.0f), showTrajectories(true), trajectoryUpdateCounter(0) {
+      timeScale(1.0f), showTrajectories(false), trajectoryUpdateCounter(0) {
   setupShaders();
   setupGeometry();
   setupTrajectoryGeometry();
@@ -115,7 +115,7 @@ void Simulation::setupShaders() {
   checkShaderCompilation(trajectoryVertex, "TRAJECTORY_VERTEX");
 
   GLuint trajectoryFragment = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(trajectoryVertex, 1, &trajectoryFragmentShaderSource, NULL);
+  glShaderSource(trajectoryFragment, 1, &trajectoryFragmentShaderSource, NULL);
   glCompileShader(trajectoryFragment);
   checkShaderCompilation(trajectoryFragment, "TRAJECTORY_FRAGMENT");
 
@@ -321,12 +321,12 @@ void Simulation::renderTrajectories() {
     glBufferSubData(GL_ARRAY_BUFFER, 0, trajectoryData.size() * sizeof(float),
                     trajectoryData.data());
 
-    glm::vec3 trajectoryColor = body.color * 0.8f + glm::vec3(0.2f);
+    glm::vec3 trajectoryColor = body.color * 0.3f + glm::vec3(0.1f);
     glUniform3f(glGetUniformLocation(trajectoryShaderProgram, "color"),
                 trajectoryColor.r, trajectoryColor.g, trajectoryColor.b);
-    glUniform1f(glGetUniformLocation(trajectoryShaderProgram, "alpha"), 0.7f);
+    glUniform1f(glGetUniformLocation(trajectoryShaderProgram, "alpha"), 0.2f);
 
-    glDrawArrays(GL_LINE_STRIP, 0, body.trajectory.size() / 3);
+    glDrawArrays(GL_LINE_STRIP, 0, body.trajectory.size());
   }
   glDisable(GL_BLEND);
 }
@@ -366,7 +366,7 @@ void Simulation::handleInput(GLFWwindow *window) {
   // Toggle trajectories
   if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !tPressed) {
     showTrajectories = !showTrajectories;
-		std::cout << "Trajectories " << (showTrajectories ? "ON" : "OFF") << std::endl;
+    // std::cout << "Trajectories " << (showTrajectories ? 1 : 0) << std::endl;
     tPressed = true;
   } else if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
     tPressed = false;

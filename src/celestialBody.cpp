@@ -53,9 +53,7 @@ void CelestialBody::addTrajectoryPoint() {
     trajectory.pop_front();
 }
 
-void CelestialBody::clearTrajectory(){
-	trajectory.clear();
-	trajectory.push_back(position);
+void CelestialBody::clearTrajectory() {
+  trajectory.clear();
+  trajectory.push_back(position);
 }
-
-

@@ -30,7 +30,7 @@ private:
 
   void setupShaders();
   void setupGeometry();
-	void setupTrajectoryGeometry();
+  void setupTrajectoryGeometry();
   void setupScene();
   void updateCamera(int width, int height);
   glm::vec3 getCameraPosition();
