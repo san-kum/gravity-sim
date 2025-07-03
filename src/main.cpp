@@ -33,17 +33,23 @@ int main() {
 
   // simulation
   Simulation simulation;
-
-  std::cout << "Simulation Controls:\n";
+  std::cout << "========================================\n";
+  std::cout << "    Gravity Simulator - Controls\n";
+  std::cout << "========================================\n";
   std::cout << "SPACE - Pause/Resume\n";
   std::cout << "W/S - Speed up/slow down time\n";
   std::cout << "A/D - zoom in/out\n";
   std::cout << "T - Toggle trajectory\n";
+  std::cout << "B - Toggle algorithm\n";
   std::cout << "R - reset simulation\n";
   std::cout << "Esc - Exit\n";
+  std::cout << "========================================\n";
 
   // rendering loop
   float lastTime = glfwGetTime();
+  int frameCount = 0;
+  float fpsTimer = 0.0f;
+
   while (!glfwWindowShouldClose(window)) {
     float currentTime = glfwGetTime();
     float deltaTime = currentTime - lastTime;
@@ -60,6 +66,14 @@ int main() {
     simulation.render(width, height);
     glfwSwapBuffers(window);
     glfwPollEvents();
+
+    // frameCount++;
+    // fpsTimer += deltaTime;
+    // if (fpsTimer >= 1.0f) {
+    //   std::cout << "FPS: " << frameCount << "\n";
+    //   frameCount = 0;
+    //   fpsTimer = 0.0f;
+    // }
   }
   glfwTerminate();
   return 0;

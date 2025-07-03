@@ -20,6 +20,7 @@ set(SRC_FILES
     src/main.cpp
     src/simulation.cpp
     src/celestialBody.cpp
+    src/octreeNode.cpp
 )
 
 set(INCLUDE_DIRS

@@ -1,4 +1,6 @@
 #include "include/simulation.h"
+#include "include/octreeNode.h"
+#include <GLFW/glfw3.h>
 #include <cmath>
 #include <glm/ext/vector_float3.hpp>
 #include <glm/geometric.hpp>
@@ -90,8 +92,8 @@ Simulation::Simulation()
   float size = glm::length(spaceMax - spaceMin);
   octreeRoot = std::make_unique<OctreeNode>(center, size);
 
-  std::cout << "Barnes-Hut Algorithm Initialized\n";
-  std::cout << "Press 'B' to toggle between Barnes-Hut and direct N-body "
+  std::cout << "Barnes-Hut algorithm initialized\n";
+  std::cout << "Press 'B' to toggle between Barnes-Hut and N-body "
                "calculation\n";
 }
 
@@ -189,7 +191,7 @@ void Simulation::setupScene() {
   std::uniform_real_distribution<> dis(0.0, 2.0 * M_PI);
 
   // inner objects -> faster and closer orbits
-  for (int i = 0; i < 30; i++) {
+  for (int i = 0; i < 100; i++) {
     float distance = 8.0f + i * 4.0f;
     float angle = dis(gen);
     float orbitalSpeed = sqrt(G * 1000.0f / distance) * 0.8f;
@@ -215,7 +217,7 @@ void Simulation::setupScene() {
   }
 
   // objects between inner and outer objects (small debris)
-  for (int i = 0; i < 50; i++) {
+  for (int i = 0; i < 500; i++) {
     float distance = 15.0f + (i % 3) * 5.0f;
     float angle = dis(gen);
     float orbitalSpeed = sqrt(G * 1000.0f / distance) *
@@ -259,8 +261,40 @@ void Simulation::calculateBounds() {
   }
 }
 
+void Simulation::buildOctree() {
+  calculateBounds();
+  glm::vec3 center = (spaceMin + spaceMax) * 0.5f;
+  float size = glm::length(spaceMax - spaceMin);
+  octreeRoot = std::make_unique<OctreeNode>(center, size);
 
+  for (auto &body : bodies)
+    octreeRoot->insertBody(&body);
 
+  octreeRoot->updateMassProperties();
+}
+
+void Simulation::updateGravityBarnesHut() {
+  buildOctree();
+
+  for (auto &body : bodies) {
+    if (!body.isFixed) {
+      body.acceleration = glm::vec3(0.0f);
+      octreeRoot->calculateForce(body, G, BARNES_HUT_THETA);
+    }
+  }
+}
+
+void Simulation::updateGravityDirect() {
+  for (size_t i = 0; i < bodies.size(); i++) {
+    if (!bodies[i].isFixed)
+      bodies[i].acceleration = glm::vec3(0.0f);
+
+    for (size_t j = 0; j < bodies.size(); j++) {
+      if (i != j)
+        bodies[i].applyGravity(bodies[j], G);
+    }
+  }
+}
 
 void Simulation::update(float deltaTime) {
   if (paused)
@@ -268,21 +302,16 @@ void Simulation::update(float deltaTime) {
 
   float dt = deltaTime * timeScale;
 
-  // gravitational forces between the body pairs
-  for (size_t i = 0; i < bodies.size(); i++) {
-    for (size_t j = 0; j < bodies.size(); j++) {
-      if (i != j) {
-        bodies[i].applyGravity(bodies[j], G);
-      }
-    }
-  }
+  if (useBarnesHut)
+    updateGravityBarnesHut();
+  else
+    updateGravityDirect();
 
   for (auto &body : bodies) {
     body.update(dt);
   }
 
   // update trajectories
-
   trajectoryUpdateCounter++;
   if (trajectoryUpdateCounter >= 1) {
     trajectoryUpdateCounter = 0;
@@ -323,8 +352,8 @@ void Simulation::render(int width, int height) {
                        GL_FALSE, glm::value_ptr(model));
 
     float distance = glm::length(body.position - getCameraPosition());
-    float pointSize = (body.radius * 500.0f) / distance;
-    pointSize = glm::clamp(pointSize, 2.0f, 50.0f);
+    float pointSize = (body.radius * POINT_SCALE_SIZE) / distance;
+    pointSize = glm::clamp(pointSize, MIN_POINT_SIZE, MAX_POINT_SIZE);
     glPointSize(pointSize);
 
     float colorData[] = {0.0f,         0.0f,         0.0f,
@@ -380,11 +409,12 @@ void Simulation::renderTrajectories() {
 }
 
 void Simulation::updateCamera(int width, int height) {
-  cameraAngle += 0.001f;
+  cameraAngle += CAMERA_ROTATION_SPEED;
 
-  glm::vec3 cameraPos = glm::vec3(cameraDistance * cos(cameraAngle),
-                                  cameraDistance * 0.3f, // Slight elevation
-                                  cameraDistance * sin(cameraAngle));
+  glm::vec3 cameraPos =
+      glm::vec3(cameraDistance * cos(cameraAngle),
+                cameraDistance * CAMERA_ELEVATION_FACTOR, // slight elevation
+                cameraDistance * sin(cameraAngle));
 
   view = glm::lookAt(cameraPos, glm::vec3(0.0f, 0.0f, 0.0f),
                      glm::vec3(0.0f, 1.0f, 0.0f));
@@ -394,7 +424,8 @@ void Simulation::updateCamera(int width, int height) {
 }
 
 glm::vec3 Simulation::getCameraPosition() {
-  return glm::vec3(cameraDistance * cos(cameraAngle), cameraDistance * 0.3f,
+  return glm::vec3(cameraDistance * cos(cameraAngle),
+                   cameraDistance * CAMERA_ELEVATION_FACTOR,
                    cameraDistance * sin(cameraAngle));
 }
 
@@ -403,6 +434,7 @@ void Simulation::handleInput(GLFWwindow *window) {
   static bool spacePressed = false;
   static bool tPressed = false;
   static bool rPressed = false;
+  static bool bPressed = false;
 
   // Toggle pause
   if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !spacePressed) {
@@ -418,6 +450,15 @@ void Simulation::handleInput(GLFWwindow *window) {
     tPressed = true;
   } else if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE)
     tPressed = false;
+
+  // Toggle algorithm
+  if (glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS && !bPressed) {
+    useBarnesHut = !useBarnesHut;
+    std::cout << "Using " << (useBarnesHut ? "Barnes-Hut" : "n-body")
+              << " algoritm\n";
+    bPressed = true;
+  } else if (glfwGetKey(window, GLFW_KEY_B) == GLFW_RELEASE)
+    bPressed = false;
 
   // WASD
   if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
