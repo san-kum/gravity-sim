@@ -3,7 +3,15 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 
-int main() {
+#ifdef __APPLE__
+#include <GLUT/glut.h>
+#else
+
+#include <GL/glut.h>
+#endif
+
+int main(int argc, char **argv) {
+  glutInit(&argc, argv);
   // GLFW
   if (!glfwInit()) {
     std::cerr << "failed to initialize GLFW\n";
@@ -33,6 +41,7 @@ int main() {
 
   // simulation
   Simulation simulation;
+  // simulation.printBodiesInfo();
   std::cout << "========================================\n";
   std::cout << "    Gravity Simulator - Controls\n";
   std::cout << "========================================\n";
@@ -40,7 +49,11 @@ int main() {
   std::cout << "W/S - Speed up/slow down time\n";
   std::cout << "A/D - zoom in/out\n";
   std::cout << "T - Toggle trajectory\n";
-  std::cout << "B - Toggle algorithm\n";
+  std::cout << "B - Use Barnes-Hut algorithm\n";
+  std::cout << "M - Use Fast Multipole Method (FMM)\n";
+  std::cout << "N - Use Direct N-body algorithm\n";
+  std::cout << "I - Print physical properties of objects\n";
+  std::cout << "G - Toggle CPU/GPU for current algorithm(only n-body)\n";
   std::cout << "R - reset simulation\n";
   std::cout << "Esc - Exit\n";
   std::cout << "========================================\n";
@@ -62,18 +75,40 @@ int main() {
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
     glViewport(0, 0, width, height);
+
+    double mouseX, mouseY;
+    glfwGetCursorPos(window, &mouseX, &mouseY);
+    simulation.setMousePosition(mouseX, mouseY);
+    static int prevLeft = GLFW_RELEASE;
+    int left = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+    if (left == GLFW_PRESS && prevLeft == GLFW_RELEASE)
+      simulation.setMouseClick(true);
+    else
+      simulation.setMouseClick(false);
+
+    prevLeft = left;
+    static int prevRight = GLFW_RELEASE;
+    int right = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+    // if (right == GLFW_PRESS && prevRight == GLFW_RELEASE)
+    //   simulation.setRightMouseClick(true);
+    // else
+    //   simulation.setRightMouseClick(false);
+
+    prevRight = right;
     simulation.update(deltaTime);
     simulation.render(width, height);
+
+    frameCount++;
+    fpsTimer += deltaTime;
+    if (fpsTimer >= 1.0f) {
+      simulation.setFPS(frameCount / fpsTimer);
+      std::cout << "FPS: " << frameCount << "\n";
+      frameCount = 0;
+      fpsTimer = 0.0f;
+    }
+    simulation.renderHUD(width, height);
     glfwSwapBuffers(window);
     glfwPollEvents();
-
-    // frameCount++;
-    // fpsTimer += deltaTime;
-    // if (fpsTimer >= 1.0f) {
-    //   std::cout << "FPS: " << frameCount << "\n";
-    //   frameCount = 0;
-    //   fpsTimer = 0.0f;
-    // }
   }
   glfwTerminate();
   return 0;

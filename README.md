@@ -3,25 +3,40 @@
 a real-time gravity simulator built with OpenGL
 
 ## Features
-- real-time physics: gravitational forces between bodies using verlet integration
-- visualization: smooth rendering with camera rotation
-- controls: pause, speed up/down time, zoom in/out, and reset
-- body types: central star, with inner planets, outer planets and small debris
-
+- Real-time physics: gravitational forces between bodies using Verlet integration
+- Modern OpenGL 3.3+ rendering: smooth, anti-aliased discs for celestial bodies
+- Color and size coding: sun (orange, large), planets (blue, medium), asteroids (white, small)
+- Animated starfield background with subtle twinkle
+- Smooth, cinematic camera transitions and zoom
+- Real-time HUD: legend, controls, and body info on hover
+- Hover highlight: body glows and info appears in HUD
+- Camera focus: click a body to smoothly center/follow it
+- Collision detection: bodies merge or bounce when close
+- Real-time mass/radius controls: adjust selected body with keyboard
+- Clean, minimal UI and codebase
 
 ## Demo
 ![Gravity Simulator](./media/sample.gif)
 
-
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| `Space` | pause/resume |
-| `↑` / `↓` | speed up/down time |
-| `←` / `→` | zoom in/out |
-| `R` | reset simulation |
-| `Esc` | Exit |
+| Key         | Action                                 |
+|-------------|----------------------------------------|
+| `Space`     | Pause/resume simulation                |
+| `W` / `S`   | Speed up / slow down time              |
+| `A` / `D`   | Zoom in / out                          |
+| `T`         | Toggle trajectory lines                |
+| `B`         | Use Barnes-Hut algorithm               |
+| `M`         | Use Fast Multipole Method (FMM)        |
+| `N`         | Use Direct N-body algorithm            |
+| `I`         | Print physical properties of objects   |
+| `G`         | Toggle CPU/GPU (N-body only)           |
+| `R`         | Reset simulation                       |
+| `Esc`       | Exit                                   |
+| `+` / `-`   | Increase/decrease mass (hover/focus)   |
+| `[` / `]`   | Decrease/increase radius (hover/focus) |
+| Mouse hover | Show info and highlight body           |
+| Mouse click | Focus camera on body                   |
 
 ### Build Requirements
 
@@ -50,8 +65,8 @@ ninja
 
 ## Customization
 
-changes can be made in `setupScene()` in `simulation.cpp` to adjust number of bodies, sizes, position, and velocity
+You can edit `setupScene()` in `simulation.cpp` to adjust the number of bodies, their sizes, positions, and velocities.
 
 ## Optimizations
-- uses n-body implementation, computationally expensive($O(n^2)$), calculates the forces on each body and updates position and velocity simultaneously.
-- can be optimized with barnes-hut algorithm.
+- Supports Barnes-Hut and Fast Multipole Method (FMM) for faster force calculation.
+- GPU acceleration for N-body algorithm (OpenGL compute shader).

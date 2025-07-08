@@ -2,6 +2,7 @@
 #include "include/celestialBody.h"
 #include <glm/geometric.hpp>
 #include <memory>
+#include <vector>
 
 OctreeNode::OctreeNode(const glm::vec3 &center, float size, int depth)
     : center(center), size(size), totalMass(0.0f), centerOfMass(0.0f),
@@ -154,15 +155,106 @@ void OctreeNode::subdivide() {
   }
 }
 
-bool OctreeNode::shouldUseApproximation(const glm::vec3& targetPosition, float theta) const {
-	float distance = glm::length(centerOfMass - targetPosition);
+bool OctreeNode::shouldUseApproximation(const glm::vec3 &targetPosition,
+                                        float theta) const {
+  float distance = glm::length(centerOfMass - targetPosition);
 
-	if(distance < 0.1f)
-		return false;
+  if (distance < 0.1f)
+    return false;
 
-	return (size / distance) < theta;
+  return (size / distance) < theta;
 }
 
+/*
+ * Not completely sure about the FMM algorithm implementation, my math and
+ * physics not so good to understand most of it*/
 
+// FMM: Upward pass
+void OctreeNode::upwardPass() {
+  updateMassProperties();
+  dipole = glm::vec3(0.0f);
+  quadrupole = glm::mat3(0.0f);
 
+  if (isLeaf && body != nullptr)
+    return;
 
+  for (int i = 0; i < 8; i++) {
+    if (children[i]) {
+      children[i]->upwardPass();
+      // dipole: sum m_i * (r_i - center)
+      dipole += children[i]->dipole +
+                children[i]->totalMass * (children[i]->centerOfMass - center);
+      // quadrupole: sum m_i * (3 (r_i - center) (r_i - center)^T - |r_i -
+      // center|^2 I)
+      glm::vec3 d = children[i]->centerOfMass - center;
+      float d2 = glm::dot(d, d);
+      quadrupole += children[i]->quadrupole +
+                    children[i]->totalMass *
+                        (3.0f * glm::outerProduct(d, d) - d2 * glm::mat3(1.0f));
+    }
+  }
+}
+
+// FMM: Compute interaction list for a node
+void OctreeNode::computeInteractionList(
+    const OctreeNode *root, float theta,
+    std::vector<const OctreeNode *> &interactionList) const {
+  if (root == this || root->totalMass == 0.0f)
+    return;
+
+  glm::vec3 d = root->center - center;
+  float dist = glm::length(d);
+  if (dist < 1e-6f)
+    return;
+  float size = root->size;
+  if ((size / dist) < theta || root->isLeaf)
+    interactionList.push_back(root);
+  else {
+    for (int i = 0; i < 8; i++) {
+      if (root->children[i])
+        computeInteractionList(root->children[i].get(), theta, interactionList);
+    }
+  }
+}
+
+// FMM: Downward pass
+void OctreeNode::downwardPass(const glm::vec3 &parentLocalExpansion) {
+  localExpansion = parentLocalExpansion;
+  if (!isLeaf) {
+    for (int i = 0; i < 8; i++) {
+      if (children[i])
+        children[i]->downwardPass(localExpansion);
+    }
+  }
+}
+
+// FMM: Evaluate local expansion at a body
+void OctreeNode::evaluateLocalExpansion(CelestialBody &body, float G) const {
+  std::vector<const OctreeNode *> interactionList;
+  computeInteractionList(this, BARNES_HUT_THETA, interactionList);
+
+  for (const OctreeNode *node : interactionList) {
+    glm::vec3 r = body.position - node->center;
+    float r2 = glm::dot(r, r);
+    float rnorm = glm::length(r);
+    if (rnorm < 1e-6f)
+      continue;
+    // monopole term
+    glm::vec3 acc = G * node->totalMass * r / (rnorm * r2);
+    // dipole term
+    acc += G * (node->dipole - 3.0f * glm::dot(node->dipole, r) * r / r2) /
+           (r2 * rnorm);
+    // quadrupole term (optional, not implemented for simplicity)
+    body.acceleration += acc;
+  }
+
+  if (isLeaf && body.isFixed == false && this->body != nullptr &&
+      this->body != &body) {
+    body.applyGravity(*this->body, G);
+  } else if (!isLeaf) {
+    for (int i = 0; i < 8; i++) {
+      if (children[i])
+        children[i]->evaluateLocalExpansion(body, G);
+    }
+  }
+}

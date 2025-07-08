@@ -12,6 +12,8 @@ find_package(PkgConfig REQUIRED)
 find_package(OpenGL REQUIRED)
 find_package(GLEW REQUIRED)
 pkg_check_modules(GLFW REQUIRED glfw3)
+find_package(OpenMP)
+find_package(GLUT REQUIRED)
 
 # GLM headers
 include_directories("/usr/include/glm")
@@ -43,5 +45,11 @@ target_link_libraries(gravity_sim PRIVATE
 )
 
 target_compile_options(gravity_sim PRIVATE ${GLFW_CFLAGS_OTHER})
+
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(gravity_sim PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
+target_link_libraries(gravity_sim PUBLIC GLUT::GLUT)
 
 set_target_properties(gravity_sim PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

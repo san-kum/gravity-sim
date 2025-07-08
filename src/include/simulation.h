@@ -24,6 +24,9 @@
 #define MIN_POINT_SIZE 2.0f
 #define MAX_POINT_SIZE 50.0f
 
+enum class GravityAlgorithm { Direct, BarnesHut, FMM, GPU };
+enum class ComputeDevice { CPU, GPU };
+
 class Simulation {
 private:
   std::vector<CelestialBody> bodies;
@@ -36,13 +39,23 @@ private:
   float G;
   float cameraDistance;
   float cameraAngle;
+  float targetCameraDistance;
+  float targetCameraAngle;
   bool paused;
   float timeScale;
   bool showTrajectories;
   bool useBarnesHut;
   int trajectoryUpdateCounter;
+  GravityAlgorithm algorithm; // Add this member
+  ComputeDevice computeDevice = ComputeDevice::CPU;
+  float lastFPS = 0.0f;
+  bool showHUD = true;
 
   glm::vec3 spaceMin, spaceMax;
+  int hoveredBodyIndex = -1;
+  int focusedBodyIndex = -1;
+  double mouseX = -1, mouseY = -1;
+  bool mouseLeftDown = false;
 
   // Shader sources
   static const char *vertexShaderSource;
@@ -59,11 +72,29 @@ private:
   void checkShaderCompilation(GLuint shader, const std::string &type);
   void checkProgramLinking(GLuint program);
   void renderTrajectories();
+  void updateGravityFMM();
 
   void buildOctree();
   void calculateBounds();
   void updateGravityBarnesHut();
   void updateGravityDirect();
+
+  // GPU buffers
+  GLuint posSSBO = 0, velSSBO = 0, accSSBO = 0, massSSBO = 0;
+  GLuint computeShaderProgram = 0;
+  bool gpuSupported = false;
+  void updateGravityGPU();
+  void initComputeShaderAndBuffers();
+
+  // Cinema
+  static constexpr int NUM_STARS = 90;
+  glm::vec2 starPositions[NUM_STARS];
+  bool starfieldInitialized = false;
+  void renderStarfield(int width, int height, float time);
+
+  static char hudTextBuffer[9999];
+  void drawText2D(const char *text, float x, float y, float r, float g, float b,
+                  float scale, int width, int height) const;
 
 public:
   Simulation();
@@ -72,4 +103,19 @@ public:
   void update(float deltaTime);
   void render(int width, int height);
   void handleInput(GLFWwindow *window);
+  void setAlgorithm(GravityAlgorithm algo) { algorithm = algo; }
+  GravityAlgorithm getAlgorithm() const { return algorithm; }
+  void printBodiesInfo() const;
+  void setComputeDevice(ComputeDevice dev) { computeDevice = dev; }
+  ComputeDevice getComputeDevice() const { return computeDevice; }
+  void renderHUD(int width, int height) const;
+  void setFPS(float fps) { lastFPS = fps; }
+  void toggleHUD() { showHUD = !showHUD; }
+  // --- Mouse input ---
+  void setMousePosition(double x, double y) {
+    mouseX = x;
+    mouseY = y;
+  }
+  void setMouseClick(bool leftDown) { mouseLeftDown = leftDown; }
+  void handleCollisions();
 };
