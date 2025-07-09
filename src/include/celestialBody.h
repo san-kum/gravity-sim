@@ -13,9 +13,9 @@ public:
   float radius;
   bool isFixed;
 
-  // Trajectory
+  // trajectory
   std::deque<glm::vec3> trajectory;
-  static const size_t MAX_TRAJECTORY_POINTS = 500;
+  static const size_t MAX_TRAJECTORY_POINTS = 1200;
 
   CelestialBody(glm::vec3 pos, glm::vec3 vel, float m, float r, glm::vec3 col,
                 bool fixed = false);

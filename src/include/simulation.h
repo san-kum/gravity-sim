@@ -33,7 +33,8 @@ private:
   std::unique_ptr<OctreeNode> octreeRoot;
 
   GLuint VAO, VBO, shaderProgram;
-  GLuint trajectoryVAO, trajectoryVBO, trajectoryShaderProgram;
+  GLuint trajectoryVAO, trajectoryVBO, trajectoryAlphaVBO,
+      trajectoryShaderProgram;
   glm::mat4 view, projection;
 
   float G;
@@ -50,6 +51,8 @@ private:
   ComputeDevice computeDevice = ComputeDevice::CPU;
   float lastFPS = 0.0f;
   bool showHUD = true;
+  bool showFabric = false;
+  int fabricUpdateCounter = 0;
 
   glm::vec3 spaceMin, spaceMax;
   int hoveredBodyIndex = -1;
@@ -92,6 +95,17 @@ private:
   bool starfieldInitialized = false;
   void renderStarfield(int width, int height, float time);
 
+  // Relativity stuff
+  GLuint fabricVAO = 0, fabricVBO = 0, fabricEBO = 0, fabricShader = 0;
+  int fabricGridRes = 64;
+  std::vector<glm::vec3> fabricVertices;
+  std::vector<unsigned int> fabricIndices;
+  void initFabricMesh();
+  void updateFabricMesh();
+  void renderFabricMesh();
+  static const char *fabricVertexShaderSource;
+  static const char *fabricFragmentShaderSource;
+
   static char hudTextBuffer[9999];
   void drawText2D(const char *text, float x, float y, float r, float g, float b,
                   float scale, int width, int height) const;
@@ -111,6 +125,7 @@ public:
   void renderHUD(int width, int height) const;
   void setFPS(float fps) { lastFPS = fps; }
   void toggleHUD() { showHUD = !showHUD; }
+  void toggleFabric() { showFabric = !showFabric; }
   // --- Mouse input ---
   void setMousePosition(double x, double y) {
     mouseX = x;

@@ -41,24 +41,9 @@ int main(int argc, char **argv) {
 
   // simulation
   Simulation simulation;
-  // simulation.printBodiesInfo();
-  std::cout << "========================================\n";
-  std::cout << "    Gravity Simulator - Controls\n";
-  std::cout << "========================================\n";
-  std::cout << "SPACE - Pause/Resume\n";
-  std::cout << "W/S - Speed up/slow down time\n";
-  std::cout << "A/D - zoom in/out\n";
-  std::cout << "T - Toggle trajectory\n";
-  std::cout << "B - Use Barnes-Hut algorithm\n";
-  std::cout << "M - Use Fast Multipole Method (FMM)\n";
-  std::cout << "N - Use Direct N-body algorithm\n";
-  std::cout << "I - Print physical properties of objects\n";
-  std::cout << "G - Toggle CPU/GPU for current algorithm(only n-body)\n";
-  std::cout << "R - reset simulation\n";
-  std::cout << "Esc - Exit\n";
-  std::cout << "========================================\n";
 
   // rendering loop
+
   float lastTime = glfwGetTime();
   int frameCount = 0;
   float fpsTimer = 0.0f;
@@ -89,23 +74,19 @@ int main(int argc, char **argv) {
     prevLeft = left;
     static int prevRight = GLFW_RELEASE;
     int right = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
-    // if (right == GLFW_PRESS && prevRight == GLFW_RELEASE)
-    //   simulation.setRightMouseClick(true);
-    // else
-    //   simulation.setRightMouseClick(false);
 
     prevRight = right;
     simulation.update(deltaTime);
     simulation.render(width, height);
 
-    frameCount++;
-    fpsTimer += deltaTime;
-    if (fpsTimer >= 1.0f) {
-      simulation.setFPS(frameCount / fpsTimer);
-      std::cout << "FPS: " << frameCount << "\n";
-      frameCount = 0;
-      fpsTimer = 0.0f;
-    }
+    // frameCount++;
+    // fpsTimer += deltaTime;
+    // if (fpsTimer >= 1.0f) {
+    //   simulation.setFPS(frameCount / fpsTimer);
+    //   std::cout << "FPS: " << frameCount << "\n";
+    //   frameCount = 0;
+    //   fpsTimer = 0.0f;
+    // }
     simulation.renderHUD(width, height);
     glfwSwapBuffers(window);
     glfwPollEvents();

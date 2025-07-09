@@ -132,32 +132,32 @@ void main()
 )";
 
 const char *Simulation::trajectoryVertexShaderSource = R"(
-	#version 330 core
-	layout (location = 0) in vec3 aPos;
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in float aAlpha;
 
-	uniform mat4 view;
-	uniform mat4 projection;
-	uniform vec3 color;
-	uniform float alpha;
+    uniform mat4 view;
+    uniform mat4 projection;
+    uniform vec3 color;
 
-	out vec4 vertexColor;
+    out vec4 vertexColor;
 
-	void main()
-	{
-	    gl_Position = projection * view * vec4(aPos, 1.0);
-	    vertexColor = vec4(color, alpha);
-	}
+    void main()
+    {
+        gl_Position = projection * view * vec4(aPos, 1.0);
+        vertexColor = vec4(color, aAlpha);
+    }
 )";
 
 const char *Simulation::trajectoryFragmentShaderSource = R"(
-	#version 330 core
-	in vec4 vertexColor;
-	out vec4 color;
+    #version 330 core
+    in vec4 vertexColor;
+    out vec4 color;
 
-	void main()
-	{
-	    color = vertexColor;
-	}
+    void main()
+    {
+        color = vertexColor;
+    }
 )";
 
 const char *nbodyComputeShaderSource = R"(
@@ -198,6 +198,28 @@ void main() {
 }
 )";
 
+const char *Simulation::fabricVertexShaderSource = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+uniform mat4 view;
+uniform mat4 projection;
+out float vHeight;
+void main() {
+    vHeight = aPos.y;
+    gl_Position = projection * view * vec4(aPos.x, 0.0, aPos.z, 1.0) + vec4(0, aPos.y, 0, 0);
+}
+)";
+
+const char *Simulation::fabricFragmentShaderSource = R"(
+#version 330 core
+out vec4 FragColor;
+uniform vec3 uColor;
+uniform float uAlpha;
+void main() {
+    FragColor = vec4(uColor, uAlpha);
+}
+)";
+
 Simulation::Simulation()
     : G(DEFAULT_GRAVITATIONAL_CONSTANT),
       cameraDistance(DEFAULT_CAMERA_DISTANCE), cameraAngle(0.0f),
@@ -206,20 +228,18 @@ Simulation::Simulation()
       useBarnesHut(true), trajectoryUpdateCounter(0), spaceMin(-1000.0f),
       spaceMax(1000.f),
       algorithm(GravityAlgorithm::BarnesHut) { // Default to Barnes-Hut
+  fabricGridRes = 48;
   setupShaders();
   setupGeometry();
   setupTrajectoryGeometry();
   setupScene();
+  initFabricMesh();
 
   calculateBounds();
   glm::vec3 center = (spaceMin + spaceMax) * 0.5f;
   float size = glm::length(spaceMax - spaceMin);
   octreeRoot = std::make_unique<OctreeNode>(center, size);
   initComputeShaderAndBuffers();
-
-  std::cout << "Barnes-Hut algorithm initialized\n";
-  std::cout
-      << "Press 'B' to toggle between Barnes-Hut and N-body calculation\n";
 }
 
 Simulation::~Simulation() {
@@ -294,6 +314,7 @@ void Simulation::setupGeometry() {
 void Simulation::setupTrajectoryGeometry() {
   glGenVertexArrays(1, &trajectoryVAO);
   glGenBuffers(1, &trajectoryVBO);
+  glGenBuffers(1, &trajectoryAlphaVBO);
 
   glBindVertexArray(trajectoryVAO);
   glBindBuffer(GL_ARRAY_BUFFER, trajectoryVBO);
@@ -302,6 +323,15 @@ void Simulation::setupTrajectoryGeometry() {
                GL_DYNAMIC_DRAW);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
   glEnableVertexAttribArray(0);
+
+  glBindBuffer(GL_ARRAY_BUFFER, trajectoryAlphaVBO);
+  glBufferData(GL_ARRAY_BUFFER,
+               CelestialBody::MAX_TRAJECTORY_POINTS * sizeof(float), NULL,
+               GL_DYNAMIC_DRAW);
+  glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void *)0);
+  glEnableVertexAttribArray(1);
+
+  glBindVertexArray(0);
 }
 
 void Simulation::setupScene() {
@@ -536,7 +566,10 @@ void Simulation::render(int width, int height) {
 
   // --- animated cinematic background ---
   renderStarfield(width, height, (float)glfwGetTime());
-
+  if (showFabric) {
+    updateFabricMesh();
+    renderFabricMesh();
+  }
   updateCamera(width, height);
 
   if (showTrajectories)
@@ -700,7 +733,7 @@ void Simulation::renderTrajectories() {
 
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glLineWidth(2.0f);
+  glLineWidth(1.0f);
 
   glBindVertexArray(trajectoryVAO);
 
@@ -709,34 +742,67 @@ void Simulation::renderTrajectories() {
     if (body.isFixed || body.trajectory.size() < 2)
       continue;
 
+    size_t N = body.trajectory.size();
+    int window = 10;
+    std::vector<glm::vec3> smoothedPoints(N);
+    glm::vec3 sum(0.0f);
+    int half = window / 2;
+    for (size_t j = 0; j < N; ++j) {
+      if (j == 0) {
+        sum = glm::vec3(0.0f);
+        int count = 0;
+        for (int k = int(j) - half; k <= int(j) + half; ++k) {
+          if (k >= 0 && k < int(N)) {
+            sum += body.trajectory[k];
+            count++;
+          }
+        }
+        smoothedPoints[j] = sum / float(count);
+      } else {
+        int prev_out = int(j) - half - 1;
+        int next_in = int(j) + half;
+        int count = 0;
+        if (prev_out >= 0 && prev_out < int(N)) {
+          sum -= body.trajectory[prev_out];
+        }
+        if (next_in >= 0 && next_in < int(N)) {
+          sum += body.trajectory[next_in];
+        }
+        int left = std::max(0, int(j) - half);
+        int right = std::min(int(N) - 1, int(j) + half);
+        count = right - left + 1;
+        smoothedPoints[j] = sum / float(count);
+      }
+    }
     std::vector<float> trajectoryData;
-    for (const auto &point : body.trajectory) {
+    std::vector<float> alphaData;
+    for (size_t j = 0; j < N; ++j) {
+      const auto &point = smoothedPoints[j];
       trajectoryData.push_back(point.x);
       trajectoryData.push_back(point.y);
       trajectoryData.push_back(point.z);
+      float alpha = 0.005f + 0.495f * (float(j) / float(N - 1));
+      alphaData.push_back(alpha);
     }
     if (trajectoryData.empty())
       continue;
-
     glBindBuffer(GL_ARRAY_BUFFER, trajectoryVBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, trajectoryData.size() * sizeof(float),
                     trajectoryData.data());
-
+    glBindBuffer(GL_ARRAY_BUFFER, trajectoryAlphaVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, alphaData.size() * sizeof(float),
+                    alphaData.data());
     glm::vec3 color;
     if (i == 0)
-      color = glm::vec3(1.0f, 0.7f, 0.3f); // Sun: orange
+      color = glm::vec3(1.0f, 0.7f, 0.3f); // sun: orange
     else if (i <= 100)
-      color = glm::vec3(0.5f, 0.7f, 1.0f); // Planets: blue
+      color = glm::vec3(0.5f, 0.7f, 1.0f); // planets: blue
     else
-      color = glm::vec3(0.95f, 0.95f, 0.95f); // Asteroids: white
-
-    glm::vec3 trajectoryColor =
-        color * 0.7f + glm::vec3(0.1f); // slightly dimmed
+      color = glm::vec3(0.95f, 0.95f, 0.95f); // asteroids: white
+    glm::vec3 trajectoryColor = color * 0.5f + glm::vec3(0.5f);
     glUniform3f(glGetUniformLocation(trajectoryShaderProgram, "color"),
                 trajectoryColor.r, trajectoryColor.g, trajectoryColor.b);
-    glUniform1f(glGetUniformLocation(trajectoryShaderProgram, "alpha"), 0.1f);
-
-    glDrawArrays(GL_LINE_STRIP, 0, body.trajectory.size());
+    glDrawArrays(GL_LINE_STRIP, 0, N);
   }
   glDisable(GL_BLEND);
 }
@@ -773,6 +839,7 @@ void Simulation::handleInput(GLFWwindow *window) {
   static bool nPressed = false;
   static bool gPressed = false;
   static bool iPressed = false;
+  static bool fPressed = false;
 
   // Toggle pause
   if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !spacePressed) {
@@ -858,6 +925,13 @@ void Simulation::handleInput(GLFWwindow *window) {
     iPressed = true;
   } else if (glfwGetKey(window, GLFW_KEY_I) == GLFW_RELEASE) {
     iPressed = false;
+  }
+
+  if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS && !fPressed) {
+    showFabric = !showFabric;
+    fPressed = true;
+  } else if (glfwGetKey(window, GLFW_KEY_F) == GLFW_RELEASE) {
+    fPressed = false;
   }
 }
 
@@ -948,303 +1022,162 @@ void Simulation::updateGravityGPU() {
   }
 }
 
-void Simulation::initComputeShaderAndBuffers() {
-  computeShaderProgram = glCreateProgram();
-  GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
-  glShaderSource(shader, 1, &nbodyComputeShaderSource, nullptr);
-  glCompileShader(shader);
-  GLint success;
-  glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-    std::cerr << "Compute shader compilation failed: " << infoLog << std::endl;
-    gpuSupported = false;
-    return;
+void Simulation::initFabricMesh() {
+  // grid in XZ plane, y = 0, covering [-gridSize, gridSize]
+  int N = fabricGridRes;
+  float gridSize = 80.0f;
+  fabricVertices.clear();
+  fabricIndices.clear();
+  for (int z = 0; z < N; ++z) {
+    for (int x = 0; x < N; ++x) {
+      float fx = ((float)x / (N - 1) - 0.5f) * 2.0f * gridSize;
+      float fz = ((float)z / (N - 1) - 0.5f) * 2.0f * gridSize;
+      fabricVertices.emplace_back(fx, 0.0f, fz);
+    }
   }
-  glAttachShader(computeShaderProgram, shader);
-  glLinkProgram(computeShaderProgram);
-  glGetProgramiv(computeShaderProgram, GL_LINK_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetProgramInfoLog(computeShaderProgram, 512, nullptr, infoLog);
-    std::cerr << "Compute shader linking failed: " << infoLog << std::endl;
-    gpuSupported = false;
-    return;
+  for (int z = 0; z < N - 1; ++z) {
+    for (int x = 0; x < N - 1; ++x) {
+      int i0 = z * N + x;
+      int i1 = z * N + (x + 1);
+      int i2 = (z + 1) * N + x;
+      int i3 = (z + 1) * N + (x + 1);
+      fabricIndices.push_back(i0);
+      fabricIndices.push_back(i2);
+      fabricIndices.push_back(i1);
+      fabricIndices.push_back(i1);
+      fabricIndices.push_back(i2);
+      fabricIndices.push_back(i3);
+    }
   }
-  glDeleteShader(shader);
-
-  // create SSBOs
-  size_t bufSize = std::max<size_t>(1, bodies.size()) * sizeof(glm::vec4);
-  glGenBuffers(1, &posSSBO);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSBO);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, bufSize, nullptr, GL_DYNAMIC_DRAW);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, posSSBO);
-
-  glGenBuffers(1, &velSSBO);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSBO);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, bufSize, nullptr, GL_DYNAMIC_DRAW);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, velSSBO);
-
-  glGenBuffers(1, &accSSBO);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, accSSBO);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, bufSize, nullptr, GL_DYNAMIC_DRAW);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, accSSBO);
-
-  glGenBuffers(1, &massSSBO);
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, massSSBO);
-  glBufferData(GL_SHADER_STORAGE_BUFFER,
-               std::max<size_t>(1, bodies.size()) * sizeof(float), nullptr,
-               GL_DYNAMIC_DRAW);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, massSSBO);
-
-  gpuSupported = true;
-}
-
-void Simulation::printBodiesInfo() const {
-  std::cout << "\nCelestial Bodies Info:\n";
-  for (size_t i = 0; i < bodies.size(); ++i) {
-    const CelestialBody &body = bodies[i];
-    std::string type;
-    if (i == 0)
-      type = "Sun";
-    else if (i <= 100)
-      type = "Inner";
-    else if (i <= 200)
-      type = "Outer";
-    else
-      type = "Asteroid";
-    std::cout << "[" << i << "] Type: " << type << ", Mass: " << body.mass
-              << ", Radius: " << body.radius << ", Pos: (" << body.position.x
-              << ", " << body.position.y << ", " << body.position.z << ")"
-              << ", Vel: (" << body.velocity.x << ", " << body.velocity.y
-              << ", " << body.velocity.z << ")"
-              << ", Fixed: " << (body.isFixed ? "true" : "false")
-              << ", Color: (" << body.color.r << ", " << body.color.g << ", "
-              << body.color.b << ")" << std::endl;
+  // openGL buffers
+  if (fabricVAO == 0)
+    glGenVertexArrays(1, &fabricVAO);
+  if (fabricVBO == 0)
+    glGenBuffers(1, &fabricVBO);
+  if (fabricEBO == 0)
+    glGenBuffers(1, &fabricEBO);
+  glBindVertexArray(fabricVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, fabricVBO);
+  glBufferData(GL_ARRAY_BUFFER, fabricVertices.size() * sizeof(glm::vec3),
+               fabricVertices.data(), GL_DYNAMIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void *)0);
+  glEnableVertexAttribArray(0);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, fabricEBO);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+               fabricIndices.size() * sizeof(unsigned int),
+               fabricIndices.data(), GL_STATIC_DRAW);
+  glBindVertexArray(0);
+  // Shader
+  if (fabricShader == 0) {
+    GLuint vert = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vert, 1, &fabricVertexShaderSource, nullptr);
+    glCompileShader(vert);
+    GLuint frag = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(frag, 1, &fabricFragmentShaderSource, nullptr);
+    glCompileShader(frag);
+    fabricShader = glCreateProgram();
+    glAttachShader(fabricShader, vert);
+    glAttachShader(fabricShader, frag);
+    glLinkProgram(fabricShader);
+    glDeleteShader(vert);
+    glDeleteShader(frag);
   }
 }
 
-void Simulation::drawText2D(const char *text, float x, float y, float r,
-                            float g, float b, float scale, int width,
-                            int height) const {
-  initTextGL();
-  if (!textShader)
+void Simulation::updateFabricMesh() {
+  if (++fabricUpdateCounter % 3 != 0)
     return;
-  int quads = stb_easy_font_print(x, y, (char *)text, NULL, hudTextBuffer,
-                                  sizeof(hudTextBuffer));
-  int numVerts = quads * 4;
-  std::vector<GLuint> indices(quads * 6);
-  for (int i = 0; i < quads; ++i) {
-    int v = i * 4, idx = i * 6;
-    indices[idx + 0] = v + 0;
-    indices[idx + 1] = v + 1;
-    indices[idx + 2] = v + 2;
-    indices[idx + 3] = v + 0;
-    indices[idx + 4] = v + 2;
-    indices[idx + 5] = v + 3;
+  float Gvis = G;
+  float scale = 0.12f;
+  int N = fabricGridRes;
+
+#pragma omp parallel for schedule(static)
+  for (int i = 0; i < (int)fabricVertices.size(); ++i) {
+    glm::vec3 v = fabricVertices[i];
+    float y = 0.0f;
+    glm::vec2 pos2d(v.x, v.z);
+    for (const auto &body : bodies) {
+      glm::vec2 b2d(body.position.x, body.position.z);
+      float dist = glm::length(pos2d - b2d);
+      dist = glm::max(dist, 1.0f);
+      y += -Gvis * body.mass / dist;
+    }
+    fabricVertices[i].y = y * scale;
   }
-  static GLuint textEBO = 0;
-  if (!textEBO)
-    glGenBuffers(1, &textEBO);
-  glUseProgram(textShader);
-  glUniform2f(glGetUniformLocation(textShader, "uScreen"), (float)width,
-              (float)height);
-  glUniform3f(glGetUniformLocation(textShader, "uColor"), r, g, b);
-  glBindVertexArray(textVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, textVBO);
-  glBufferData(GL_ARRAY_BUFFER, numVerts * 16, hudTextBuffer, GL_DYNAMIC_DRAW);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, textEBO);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint),
-               indices.data(), GL_DYNAMIC_DRAW);
-  glDisable(GL_DEPTH_TEST);
+
+  std::vector<float> smoothedY(fabricVertices.size(), 0.0f);
+  for (int iter = 0; iter < 3; ++iter) {
+    for (int z = 0; z < N; ++z) {
+      for (int x = 0; x < N; ++x) {
+        int idx = z * N + x;
+        float sum = fabricVertices[idx].y;
+        int count = 1;
+        if (z > 0) {
+          sum += fabricVertices[(z - 1) * N + x].y;
+          count++;
+        }
+        if (z < N - 1) {
+          sum += fabricVertices[(z + 1) * N + x].y;
+          count++;
+        }
+        if (x > 0) {
+          sum += fabricVertices[z * N + (x - 1)].y;
+          count++;
+        }
+        if (x < N - 1) {
+          sum += fabricVertices[z * N + (x + 1)].y;
+          count++;
+        }
+        smoothedY[idx] = sum / count;
+      }
+    }
+    for (int i = 0; i < (int)fabricVertices.size(); ++i) {
+      fabricVertices[i].y = smoothedY[i];
+    }
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, fabricVBO);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, fabricVertices.size() * sizeof(glm::vec3),
+                  fabricVertices.data());
+}
+
+void Simulation::renderFabricMesh() {
+  glUseProgram(fabricShader);
+  glUniformMatrix4fv(glGetUniformLocation(fabricShader, "view"), 1, GL_FALSE,
+                     glm::value_ptr(view));
+  glUniformMatrix4fv(glGetUniformLocation(fabricShader, "projection"), 1,
+                     GL_FALSE, glm::value_ptr(projection));
+  glBindVertexArray(fabricVAO);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+  glLineWidth(1.0f);
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+  glDisable(GL_CULL_FACE);
+  // Set line color to even lighter gray and lower alpha
+  GLint colorLoc = glGetUniformLocation(fabricShader, "uColor");
+  if (colorLoc >= 0)
+    glUniform3f(colorLoc, 0.85f, 0.85f, 0.85f);
+  GLint alphaLoc = glGetUniformLocation(fabricShader, "uAlpha");
+  if (alphaLoc >= 0)
+    glUniform1f(alphaLoc, 0.25f);
+  glDrawElements(GL_TRIANGLES, fabricIndices.size(), GL_UNSIGNED_INT, 0);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glBindVertexArray(0);
   glDisable(GL_BLEND);
-  glEnable(GL_DEPTH_TEST);
-  glBindVertexArray(0);
-  glUseProgram(0);
 }
 
-void Simulation::renderHUD(int width, int height) const {
-  // minimal legend HUD
-  float x = 24.0f, y = height - 40.0f, dy = 36.0f;
-  float scale = 2.2f;
-  drawText2D("Legend:", x, y, 1, 1, 1, scale, width, height);
-  drawText2D("Sun (large, orange)", x + 10, y - dy, 1.0f, 0.7f, 0.3f, scale,
-             width, height);
-  drawText2D("Planets (medium, blue)", x + 10, y - 2 * dy, 0.5f, 0.7f, 1.0f,
-             scale, width, height);
-  drawText2D("Asteroids (small, white)", x + 10, y - 3 * dy, 0.95f, 0.95f,
-             0.95f, scale, width, height);
-
-  // controls/keymap
-  float y2 = y - 4.5f * dy;
-  drawText2D("Controls:", x, y2, 1, 1, 1, scale, width, height);
-  float d2 = 30.0f * scale;
-  int line = 1;
-  drawText2D("SPACE - Pause/Resume", x + 10, y2 - d2 * line, 1, 1, 1, scale,
-             width, height);
-  ++line;
-  drawText2D("W/S   - Speed up/slow down time", x + 10, y2 - d2 * line, 1, 1, 1,
-             scale, width, height);
-  ++line;
-  drawText2D("A/D   - Zoom in/out", x + 10, y2 - d2 * line, 1, 1, 1, scale,
-             width, height);
-  ++line;
-  drawText2D("T     - Toggle trajectory", x + 10, y2 - d2 * line, 1, 1, 1,
-             scale, width, height);
-  ++line;
-  drawText2D("B     - Use Barnes-Hut algorithm", x + 10, y2 - d2 * line, 1, 1,
-             1, scale, width, height);
-  ++line;
-  drawText2D("M     - Use Fast Multipole Method (FMM)", x + 10, y2 - d2 * line,
-             1, 1, 1, scale, width, height);
-  ++line;
-  drawText2D("N     - Use Direct N-body algorithm", x + 10, y2 - d2 * line, 1,
-             1, 1, scale, width, height);
-  ++line;
-  drawText2D("I     - Print physical properties", x + 10, y2 - d2 * line, 1, 1,
-             1, scale, width, height);
-  ++line;
-  drawText2D("G     - Toggle CPU/GPU (N-body only)", x + 10, y2 - d2 * line, 1,
-             1, 1, scale, width, height);
-  ++line;
-  drawText2D("R     - Reset simulation", x + 10, y2 - d2 * line, 1, 1, 1, scale,
-             width, height);
-  ++line;
-  drawText2D("Esc   - Exit", x + 10, y2 - d2 * line, 1, 1, 1, scale, width,
-             height);
-
-  // body info on hover
-  if (hoveredBodyIndex >= 0 && hoveredBodyIndex < (int)bodies.size()) {
-    const auto &body = bodies[hoveredBodyIndex];
-    std::string type;
-    if (hoveredBodyIndex == 0)
-      type = "Sun";
-    else if (hoveredBodyIndex <= 100)
-      type = "Planet";
-    else
-      type = "Asteroid";
-    char buf[256];
-    float vy = y2 - d2 * (line + 2);
-    snprintf(buf, sizeof(buf), "[Hover] %s | Mass: %.2f | Radius: %.2f",
-             type.c_str(), body.mass, body.radius);
-    drawText2D(buf, x, vy, 1, 1, 1, scale, width, height);
-    snprintf(buf, sizeof(buf), "Pos: (%.2f, %.2f, %.2f)", body.position.x,
-             body.position.y, body.position.z);
-    drawText2D(buf, x, vy - d2, 1, 1, 1, scale, width, height);
-    snprintf(buf, sizeof(buf), "Vel: (%.2f, %.2f, %.2f)", body.velocity.x,
-             body.velocity.y, body.velocity.z);
-    drawText2D(buf, x, vy - 2 * d2, 1, 1, 1, scale, width, height);
-  }
-}
-
-static void setupBillboardGeometry() {
-  if (discVAO)
-    return;
-  float quadVertices[] = {-1.0f, -1.0f, 1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f};
-  glGenVertexArrays(1, &discVAO);
-  glGenBuffers(1, &discVBO);
-  glBindVertexArray(discVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, discVBO);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices,
-               GL_STATIC_DRAW);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
-  glEnableVertexAttribArray(0);
-  glBindVertexArray(0);
-}
-
-static void setupDiscShaders() {
-  if (discShader)
-    return;
-  const char *vertSrc = R"(
-        #version 330 core
-        layout (location = 0) in vec2 aPos;
-        uniform vec3 uWorldPos;
-        uniform float uRadius;
-        uniform mat4 view;
-        uniform mat4 projection;
-        out vec2 vLocalPos;
-        void main() {
-            vLocalPos = aPos;
-            vec4 world = vec4(uWorldPos, 1.0) + vec4(aPos * uRadius, 0.0, 0.0);
-            gl_Position = projection * view * world;
-        }
-    )";
-  const char *fragSrc = R"(
-        #version 330 core
-        in vec2 vLocalPos;
-        out vec4 FragColor;
-        uniform vec3 uColor;
-        void main() {
-            float dist = length(vLocalPos);
-            float edge = 1.0;
-            if (dist > edge) discard;
-            float vignette = 0.85 + 0.15 * (1.0 - dist); 
-            vec3 color = uColor * vignette;
-            float alpha = 1.0 - smoothstep(edge - 0.05, edge, dist);
-            FragColor = vec4(color, alpha);
-        }
-    )";
-  GLuint vert = glCreateShader(GL_VERTEX_SHADER);
-  glShaderSource(vert, 1, &vertSrc, nullptr);
-  glCompileShader(vert);
-  GLint success;
-  glGetShaderiv(vert, GL_COMPILE_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetShaderInfoLog(vert, 512, nullptr, infoLog);
-    std::cerr << "[Disc] Vertex shader error: " << infoLog << std::endl;
-    glDeleteShader(vert);
-    return;
-  }
-  GLuint frag = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(frag, 1, &fragSrc, nullptr);
-  glCompileShader(frag);
-  glGetShaderiv(frag, GL_COMPILE_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetShaderInfoLog(frag, 512, nullptr, infoLog);
-    std::cerr << "[Disc] Fragment shader error: " << infoLog << std::endl;
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    return;
-  }
-  discShader = glCreateProgram();
-  glAttachShader(discShader, vert);
-  glAttachShader(discShader, frag);
-  glLinkProgram(discShader);
-  glGetProgramiv(discShader, GL_LINK_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetProgramInfoLog(discShader, 512, nullptr, infoLog);
-    std::cerr << "[Disc] Shader program link error: " << infoLog << std::endl;
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    glDeleteProgram(discShader);
-    discShader = 0;
-    return;
-  }
-  glDeleteShader(vert);
-  glDeleteShader(frag);
-}
-
-// Modern OpenGL starfield resources
 static GLuint starVAO = 0, starVBO = 0, starShader = 0;
 
 static void setupStarfieldGL(int width, int height, glm::vec2 *starPositions,
                              int numStars, bool &initialized) {
   if (initialized && starVAO && starVBO && starShader)
     return;
-  // Generate random star positions in NDC
+  // random star positions in NDC
   std::mt19937 rng(42);
   std::uniform_real_distribution<float> xdist(-1.0f, 1.0f);
   std::uniform_real_distribution<float> ydist(-1.0f, 1.0f);
-  for (int i = 0; i < numStars; ++i) {
+  for (int i = 0; i < numStars; ++i)
     starPositions[i] = glm::vec2(xdist(rng), ydist(rng));
-  }
+
   if (!starVAO)
     glGenVertexArrays(1, &starVAO);
   if (!starVBO)
@@ -1256,7 +1189,7 @@ static void setupStarfieldGL(int width, int height, glm::vec2 *starPositions,
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
   glEnableVertexAttribArray(0);
   glBindVertexArray(0);
-  // Starfield shader
+
   if (!starShader) {
     const char *vertSrc = R"(
             #version 330 core
@@ -1311,3 +1244,199 @@ void Simulation::renderStarfield(int width, int height, float time) {
 }
 
 char Simulation::hudTextBuffer[9999];
+
+void Simulation::renderHUD(int width, int height) const {
+  // minimal legend HUD
+  float x = 24.0f, y = height - 40.0f, dy = 36.0f;
+  float scale = 2.2f;
+  drawText2D("Legend:", x, y, 1, 1, 1, scale, width, height);
+  drawText2D("Sun (large, orange)", x + 10, y - dy, 1.0f, 0.7f, 0.3f, scale,
+             width, height);
+  drawText2D("Planets (medium, blue)", x + 10, y - 2 * dy, 0.5f, 0.7f, 1.0f,
+             scale, width, height);
+  drawText2D("Asteroids (small, white)", x + 10, y - 3 * dy, 0.95f, 0.95f,
+             0.95f, scale, width, height);
+
+  // controls/keymap
+  float y2 = y - 4.5f * dy;
+  drawText2D("Controls:", x, y2, 1, 1, 1, scale, width, height);
+  float d2 = 30.0f * scale;
+  int line = 1;
+  drawText2D("SPACE - Pause/Resume", x + 10, y2 - d2 * line, 1, 1, 1, scale,
+             width, height);
+  ++line;
+  drawText2D("W/S   - Speed up/slow down time", x + 10, y2 - d2 * line, 1, 1, 1,
+             scale, width, height);
+  ++line;
+  drawText2D("A/D   - Zoom in/out", x + 10, y2 - d2 * line, 1, 1, 1, scale,
+             width, height);
+  ++line;
+  drawText2D("T     - Toggle trajectory", x + 10, y2 - d2 * line, 1, 1, 1,
+             scale, width, height);
+  ++line;
+  drawText2D("B     - Use Barnes-Hut algorithm", x + 10, y2 - d2 * line, 1, 1,
+             1, scale, width, height);
+  ++line;
+  drawText2D("M     - Use Fast Multipole Method (FMM)", x + 10, y2 - d2 * line,
+             1, 1, 1, scale, width, height);
+  ++line;
+  drawText2D("N     - Use Direct N-body algorithm", x + 10, y2 - d2 * line, 1,
+             1, 1, scale, width, height);
+  ++line;
+  drawText2D("I     - Print physical properties", x + 10, y2 - d2 * line, 1, 1,
+             1, scale, width, height);
+  ++line;
+  drawText2D("F     - Toggle space-time fabric", x + 10, y2 - d2 * line, 1, 1,
+             1, scale, width, height);
+  ++line;
+  drawText2D("G     - Toggle CPU/GPU (N-body only)", x + 10, y2 - d2 * line, 1,
+             1, 1, scale, width, height);
+  ++line;
+  drawText2D("R     - Reset simulation", x + 10, y2 - d2 * line, 1, 1, 1, scale,
+             width, height);
+  ++line;
+  drawText2D("Esc   - Exit", x + 10, y2 - d2 * line, 1, 1, 1, scale, width,
+             height);
+
+  // body info on hover
+  if (hoveredBodyIndex >= 0 && hoveredBodyIndex < (int)bodies.size()) {
+    const auto &body = bodies[hoveredBodyIndex];
+    std::string type;
+    if (hoveredBodyIndex == 0)
+      type = "Sun";
+    else if (hoveredBodyIndex <= 100)
+      type = "Planet";
+    else
+      type = "Asteroid";
+    char buf[256];
+    float vy = y2 - d2 * (line + 2);
+    snprintf(buf, sizeof(buf), "[Hover] %s | Mass: %.2f | Radius: %.2f",
+             type.c_str(), body.mass, body.radius);
+    drawText2D(buf, x, vy, 1, 1, 1, scale, width, height);
+    snprintf(buf, sizeof(buf), "Pos: (%.2f, %.2f, %.2f)", body.position.x,
+             body.position.y, body.position.z);
+    drawText2D(buf, x, vy - d2, 1, 1, 1, scale, width, height);
+    snprintf(buf, sizeof(buf), "Vel: (%.2f, %.2f, %.2f)", body.velocity.x,
+             body.velocity.y, body.velocity.z);
+    drawText2D(buf, x, vy - 2 * d2, 1, 1, 1, scale, width, height);
+  }
+}
+
+void Simulation::printBodiesInfo() const {
+  std::cout << "\nCelestial Bodies Info:\n";
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    const CelestialBody &body = bodies[i];
+    std::string type;
+    if (i == 0)
+      type = "Sun";
+    else if (i <= 100)
+      type = "Inner";
+    else if (i <= 200)
+      type = "Outer";
+    else
+      type = "Asteroid";
+    std::cout << "[" << i << "] Type: " << type << ", Mass: " << body.mass
+              << ", Radius: " << body.radius << ", Pos: (" << body.position.x
+              << ", " << body.position.y << ", " << body.position.z << ")"
+              << ", Vel: (" << body.velocity.x << ", " << body.velocity.y
+              << ", " << body.velocity.z << ")"
+              << ", Fixed: " << (body.isFixed ? "true" : "false")
+              << ", Color: (" << body.color.r << ", " << body.color.g << ", "
+              << body.color.b << ")" << std::endl;
+  }
+}
+
+void Simulation::initComputeShaderAndBuffers() {
+  computeShaderProgram = glCreateProgram();
+  GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
+  glShaderSource(shader, 1, &nbodyComputeShaderSource, nullptr);
+  glCompileShader(shader);
+  GLint success;
+  glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+    std::cerr << "Compute shader compilation failed: " << infoLog << std::endl;
+    gpuSupported = false;
+    return;
+  }
+  glAttachShader(computeShaderProgram, shader);
+  glLinkProgram(computeShaderProgram);
+  glGetProgramiv(computeShaderProgram, GL_LINK_STATUS, &success);
+  if (!success) {
+    char infoLog[512];
+    glGetProgramInfoLog(computeShaderProgram, 512, nullptr, infoLog);
+    std::cerr << "Compute shader linking failed: " << infoLog << std::endl;
+    gpuSupported = false;
+    return;
+  }
+  glDeleteShader(shader);
+
+  // create SSBOs
+  size_t bufSize = std::max<size_t>(1, bodies.size()) * sizeof(glm::vec4);
+  glGenBuffers(1, &posSSBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, bufSize, nullptr, GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, posSSBO);
+
+  glGenBuffers(1, &velSSBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, bufSize, nullptr, GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, velSSBO);
+
+  glGenBuffers(1, &accSSBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, accSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, bufSize, nullptr, GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, accSSBO);
+
+  glGenBuffers(1, &massSSBO);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, massSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(1, bodies.size()) * sizeof(float), nullptr,
+               GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, massSSBO);
+
+  gpuSupported = true;
+}
+
+void Simulation::drawText2D(const char *text, float x, float y, float r,
+                            float g, float b, float scale, int width,
+                            int height) const {
+  initTextGL();
+  if (!textShader)
+    return;
+  int quads = stb_easy_font_print(x, y, (char *)text, NULL, hudTextBuffer,
+                                  sizeof(hudTextBuffer));
+  int numVerts = quads * 4;
+  std::vector<GLuint> indices(quads * 6);
+  for (int i = 0; i < quads; ++i) {
+    int v = i * 4, idx = i * 6;
+    indices[idx + 0] = v + 0;
+    indices[idx + 1] = v + 1;
+    indices[idx + 2] = v + 2;
+    indices[idx + 3] = v + 0;
+    indices[idx + 4] = v + 2;
+    indices[idx + 5] = v + 3;
+  }
+  static GLuint textEBO = 0;
+  if (!textEBO)
+    glGenBuffers(1, &textEBO);
+  glUseProgram(textShader);
+  glUniform2f(glGetUniformLocation(textShader, "uScreen"), (float)width,
+              (float)height);
+  glUniform3f(glGetUniformLocation(textShader, "uColor"), r, g, b);
+  glBindVertexArray(textVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, textVBO);
+  glBufferData(GL_ARRAY_BUFFER, numVerts * 16, hudTextBuffer, GL_DYNAMIC_DRAW);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, textEBO);
+  glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(GLuint),
+               indices.data(), GL_DYNAMIC_DRAW);
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+  glDisable(GL_BLEND);
+  glEnable(GL_DEPTH_TEST);
+  glBindVertexArray(0);
+  glUseProgram(0);
+}
